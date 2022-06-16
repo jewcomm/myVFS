@@ -1,5 +1,11 @@
 # myVFS
 
+### Описание проекта
+
+**Реализация VFS в [TestTask](https://github.com/jewcomm/myVFS/blob/master/myVFS/TestTask.cpp)**
+
+**Простые тесты и примеры использования в [main](https://github.com/jewcomm/myVFS/blob/master/myVFS/main.cpp)**
+
 ### Описание файловой системы
 
 Виртуальная файловая система хранит информацию как минимум в двух файлах
