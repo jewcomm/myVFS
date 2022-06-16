@@ -338,3 +338,9 @@ ASALocalRun/
 
 # BeatPulse healthcheck temp database
 healthchecksdb
+
+*.vfs
+*.py
+
+/myVFS/FT.vfs
+/myVFS/CS*.vfs
