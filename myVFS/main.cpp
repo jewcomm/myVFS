@@ -6,6 +6,9 @@
 #endif // !libs
 
 int main() {
+
+	setlocale(LC_ALL, "Rus");
+
 	FILE* FT;
 	char nameFT[] = "FT.vfs";
 	FT = fopen(nameFT, "rb+");
@@ -32,80 +35,122 @@ int main() {
 		}
 	}
 
-	TestTask::VFS firtsVFS = TestTask::VFS(FT, CS);
+	TestTask::VFS myVFS = TestTask::VFS(FT, CS);
+
+	/**
+	 * Тест 1
+	 * 
+	 * Создаем файл, пишем в него строку, закрываем
+	 * Открываем для чтения, читаем строку, сравниванием строки, закрываем.
+	 * 
+	 * Ожидаем совпадение значений
+	 */
 
 	TestTask::File* file1;
+	file1 = myVFS.Create("file1.txt");
+	char file1Data[] = "Тестовая строка для первого файла, пусть будет вот такая";
+	size_t file1Len = myVFS.Write(file1, file1Data, strlen(file1Data));
+	myVFS.Close(file1);
 
-	file1 = firtsVFS.Create("data/file1.txt");
+	file1 = myVFS.Open("file1.txt");
+	char* file1Read = new char[strlen(file1Data) + 1];
+	size_t file1ReadLen = myVFS.Read(file1, file1Read, strlen(file1Data));
+	file1Read[file1ReadLen] = '\0';
+	assert(file1ReadLen == file1Len);
+	assert(strcmp(file1Data, file1Read) == 0);
+	
+	std::cout << "Тест 1 пройден \nfile1.txt прочитан успешно, данные совпадают" << std::endl << std::endl;
 
-	firtsVFS.Close(file1);
+	delete[] file1Read;
+	myVFS.Close(file1);
+
+
+	/**
+	 * Тест 2
+	 * 
+	 * Создаем файл, и пытаем открыть его еще раз
+	 * 
+	 * Ожидаем ошибку при повторном открытии
+	 */
 
 	TestTask::File* file2;
+	file2 = myVFS.Create("file2.txt");
 
-	file2 = firtsVFS.Open("data/file1.txt");
+	TestTask::File* file2_open;
+	file2_open = myVFS.Open("file2.txt");
 
-	/*char file1Data[] = "1312412";
-	//size_t file1Size = firtsVFS.Write(file1, file1Data, strlen(file1Data));
+	assert(file2_open == NULL);
 
-	/*file1 = firtsVFS.Create("data/file1.txt");
+	std::cout << "Тест 2 пройден \nОшибка открытия файла file2.txt т.к. он уже открыт в другом режиме" << std::endl << std::endl;
 
-	char file1Data[] = "1312412";
-	size_t file1Size = firtsVFS.Write(file1, file1Data, strlen(file1Data));*/
+	myVFS.Close(file2);
 
-	/*TestTask::File* a;
 
-	TestTask::File* b;
-	TestTask::File* c;
-	TestTask::File* d;
-	TestTask::File* e;
-	TestTask::File* g;
-	TestTask::File* h;
+	/**
+	 * Тест 3
+	 * 
+	 * Создаем файл в директории, закрываем его
+	 * Открываем файл с таким же названием, но без директории
+	 *
+	 * Ожидаем ошибку открытия файла
+	 */
 
-	a = firtsVFS.Create("file.txt");
-	std::cout << a->FILE_ID << " file.txt" << std::endl;
+	TestTask::File* file3;
+	file3 = myVFS.Create("folder/file3");
+	myVFS.Close(file3);
 
-	char str[] = "Its test string for first file";
+	TestTask::File* file3_reopen;
+	file3_reopen = myVFS.Open("file3");
 
-	size_t value = firtsVFS.Write(a, str, sizeof(str) / sizeof(char)); std::cout << value << std::endl;
+	assert(file3_reopen == NULL);
 
-	b = firtsVFS.Create("example.txt");
-	std::cout << b->FILE_ID << " example.txt" << std::endl;
+	std::cout << "Тест 3 пройден \nОшибка открытия файла file3 т.к. не находится в этой директории" << std::endl << std::endl;
 
-	char str1[] = "String for file 2";
 
-	//std::cout << std::strlen(str) << std::endl;
+	/**
+	 * Тест 4
+	 *
+	 * Создаем файл, закрываем в него большой массив (2 кластера + еще сколько то данных)
+	 * Закрываем файл
+	 * Открываем файл этот же файл, и пытаемся прочитать данные, сравниваем прочитанное и записанное значение
+	 *
+	 * Ожидаем совпадение массивов
+	 */
 
-	std::vector <char> newstr;
+	TestTask::File* file4;
+	file4 = myVFS.Create("folder/file4");
 
-	for (int i = 0; i < (CLUSTER_SIZE * 2); i++) {
-		newstr.push_back(i % CHAR_MAX);
+	std::vector <char> file4buff;
+
+	for (int i = 0; i < (CLUSTER_SIZE * 2) + 150; i++) {
+		file4buff.push_back(i % CHAR_MAX);
 	}
+	char* f4buff = &file4buff[0];
 
-	char* n = &newstr[0];
-	
-	//value = firtsVFS.Write(b, n, CLUSTER_SIZE * 2); std::cout << value << std::endl;
+	size_t file4wLen = myVFS.Write(file4, f4buff, (CLUSTER_SIZE * 2) + 150);
 
-	//value = firtsVFS.Write(b, str1, sizeof(str1));
-	/*c = firtsVFS.Create("dfb/file_st.txt");
-	std::cout << c->FILE_ID << " dfb/file_st.txt" << std::endl;
+	myVFS.Close(file4);
 
-	d = firtsVFS.Create("txt/file_test.txt");
-	std::cout << d->FILE_ID << " txt/file_test.txt" << std::endl;
+	TestTask::File* file4Open;
+	file4Open = myVFS.Open("folder/file4");
 
-	e = firtsVFS.Create("rex_dino");
-	std::cout << e->FILE_ID << " rex_din" << std::endl;
+	char read4buff[(CLUSTER_SIZE * 2) + 150 + 1];
 
-	g = firtsVFS.Create("txt/result/front/file_est.txt");
-	std::cout << g->FILE_ID << " txt/result/front/file_est.txt" << std::endl;
+	size_t file4rLen = myVFS.Read(file4Open, read4buff, file4wLen);
 
-	h = firtsVFS.Create("txt/result/front/file_est.txt");
-	std::cout << h->FILE_ID << " txt/result/front/file_est.txt" << std::endl;
-	*/
+	read4buff[file4rLen] = '\0';
+
+	assert(file4wLen == file4rLen);
+	assert(strcmp(f4buff, read4buff) == 0);
+
+	std::cout << "Тест 4 пройден \nПрочитанные и записанные данные совпадают" << std::endl << std::endl;
+
 	
 	fclose(FT);
 	for (auto& i : CS) {
 		fclose(i);
 	}
 
+	_CrtDumpMemoryLeaks();
 	return 0;
 }

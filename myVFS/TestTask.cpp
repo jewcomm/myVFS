@@ -5,11 +5,14 @@
 
 #endif // !libs
 
+
+std::mutex mutexLockVFS;
+
 using namespace TestTask;
 
 VFS::VFS(FILE* _dFT, FILE** _dCS) {
 	dFT = _dFT;
-	for (auto& i : dCT) {
+	for (auto& i : dCS) {
 		i = *_dCS++;
 	}
 	if (checkFILE_TABLE(dFT)) writeMETAFT(dFT);
@@ -17,6 +20,7 @@ VFS::VFS(FILE* _dFT, FILE** _dCS) {
 
 File* VFS::Create(const char* name)
 {
+	mutexLockVFS.lock();
 	std::vector <std::string> path = parsePath(name); // парсим путь
 
 	std::vector <std::string> fileName = parseFileName(path.back()); // парсим имя
@@ -69,12 +73,13 @@ File* VFS::Create(const char* name)
 			// и идем дальше
 		}
 		else { // если папка пустая
-			if (cmp(tempFT, createdFT)) { // если такой файл уже существует
+			if (cmpFT(tempFT, createdFT)) { // если такой файл уже существует
 #if DEBUG
 				std::cout << "This file alredy exsist on disk" << std::endl;
 #endif
 				createdFile->FILE_ID = prevRec; 
 				createdFile->MODE = WO_MODE;
+
 
 				return createCheckWithClear(createdFT, tempFT, createdFile);
 			}
@@ -95,7 +100,7 @@ File* VFS::Create(const char* name)
 	// если папка не пуста, или добавляем файл в корень
 	// очень плохая реализация, но лучше не придумал(
 
-	if (cmp(tempFT, createdFT)) { 
+	if (cmpFT(tempFT, createdFT)) { 
 #if DEBUG
 		std::cout << "This file alredy exsist on disk" << std::endl;
 #endif
@@ -108,7 +113,7 @@ File* VFS::Create(const char* name)
 	while (tempFT->NEXT_REC != 0xFFFFFFFF) {
 		prevRec = tempFT->NEXT_REC;
 		getFT(tempFT, tempFT->NEXT_REC);
-		if (cmp(tempFT, createdFT)) {
+		if (cmpFT(tempFT, createdFT)) {
 #if DEBUG
 			std::cout << "This file alredy exsist on disk" << std::endl;
 #endif
@@ -119,7 +124,7 @@ File* VFS::Create(const char* name)
 		}
 	}
 
-	if (cmp(tempFT, createdFT)) {
+	if (cmpFT(tempFT, createdFT)) {
 #if DEBUG
 		std::cout << "This file alredy exsist on disk" << std::endl;
 #endif
@@ -142,6 +147,7 @@ File* VFS::Create(const char* name)
 }
 
 File* VFS::Open(const char* name) {
+	mutexLockVFS.lock();
 	std::vector <std::string> path = parsePath(name); // парсим путь
 
 	std::vector <std::string> fileName = parseFileName(path.back()); // парсим имя
@@ -165,7 +171,7 @@ File* VFS::Open(const char* name) {
 		path.erase(path.begin()); // удаляем что записали
 		while (prevRec != end_data_block) { // пока не достигнем последнего файла в каталоге
 			getFT(readFT, prevRec); // читаем данные о файле
-			if (cmp(readFT, openedFT)) { // если он совпадает с нужным
+			if (cmpFT(readFT, openedFT)) { // если он совпадает с нужным
 				prevRec = readFT->F_CLAST; // переходим к файлам в данном каталоге
 				break; // выходим из цикла по текущему каталогу
 			}
@@ -175,6 +181,7 @@ File* VFS::Open(const char* name) {
 														// или если каталог пуст
 			delete openedFT;
 			delete readFT;
+			mutexLockVFS.unlock();
 			return nullptr;
 		}
 	}
@@ -192,7 +199,7 @@ File* VFS::Open(const char* name) {
 
 	while (prevRec != end_data_block) { // идем по всему каталогу, где ожидаем нужный файл
 		getFT(readFT, prevRec); 
-		if (cmp(readFT, openedFT)) { // если нашли нужный файл
+		if (cmpFT(readFT, openedFT)) { // если нашли нужный файл
 			delete openedFT;
 			delete readFT;
 
@@ -202,8 +209,10 @@ File* VFS::Open(const char* name) {
 
 			if (openFiles.find({ prevRec, WO_MODE }) == openFiles.end()) { // если файл уже октрыт в режиме WO
 				openFiles.insert(*ret);
+				mutexLockVFS.unlock();
 				return ret;
 			} else {
+				mutexLockVFS.unlock();
 				return nullptr;
 			}
 		}
@@ -213,10 +222,14 @@ File* VFS::Open(const char* name) {
 	// нужный файл не найден
 	delete openedFT;
 	delete readFT;
+	mutexLockVFS.unlock();
 	return nullptr;
 }
 
 size_t VFS::Write(File* f, char* buff, size_t len) {
+	if (f->MODE == RO_MODE) return 0;
+
+	mutexLockVFS.lock();
 	FILE_TABLE* tempFT = new FILE_TABLE;
 
 	getFT(tempFT, *f); // читаем инфу о текущем файле
@@ -237,9 +250,7 @@ size_t VFS::Write(File* f, char* buff, size_t len) {
 		uint32_t freeSpace = ftell(dFT); // адрес свободной ячейки
 
 		// в файле с кластерами данных переходим к этой ячейки
-		//fseek(dCT[0], (freeSpace - next_clast_offset) / 4 * CLUSTER_SIZE, SEEK_SET); 
-
-		fseek(dCT[0], recClastToAddrClast(freeSpace), SEEK_SET);
+		fseek(dCS[0], recClastToAddrClast(freeSpace), SEEK_SET);
 
 		uint32_t count_cluster = len / CLUSTER_SIZE; // сколько целых кластеров будет записанов
 		if (len % CLUSTER_SIZE != 0) count_cluster++; // если неполный кластер
@@ -247,7 +258,7 @@ size_t VFS::Write(File* f, char* buff, size_t len) {
 
 		uint32_t write_count = 0; // сколько всего записано
 
-		for (int i = 0; i < count_cluster; i++) {
+		for (uint32_t i = 0; i < count_cluster; i++) {
 			fseek(dFT, 4, SEEK_CUR); // переходим к следующему кластеру
 			// ищем следующий свободный кластер
 			while (fread(&addClast, sizeof(uint32_t), 1, dFT)) { // функция вернет 0 если EOF
@@ -267,9 +278,9 @@ size_t VFS::Write(File* f, char* buff, size_t len) {
 			}
 			fseek(dFT, nextBlock, SEEK_SET); // переходим к следующему свободному
 
-			fseek(dCT[0], recClastToAddrClast(freeSpace), SEEK_SET); // в файл с кластерами записываем данные
+			fseek(dCS[0], recClastToAddrClast(freeSpace), SEEK_SET); // в файл с кластерами записываем данные
 
-			size_t size = fwrite(&buff[i * CLUSTER_SIZE], 1, std::min(len, CLUSTER_SIZE), dCT[0]); // узнаем сколько записали
+			size_t size = fwrite(&buff[i * CLUSTER_SIZE], 1, std::min(len, CLUSTER_SIZE), dCS[0]); // узнаем сколько записали
 
 			if (size != std::min(len, CLUSTER_SIZE)) {
 				std::cout << "Error write combine file" << std::endl;
@@ -284,13 +295,19 @@ size_t VFS::Write(File* f, char* buff, size_t len) {
 
 		tempFT->REAL_SIZE = write_count; // пишем реальный размер
 		reWriteFT(tempFT, f->FILE_ID); // перезаписываем сколько осталось
+		mutexLockVFS.unlock();
 		return write_count;
 	}
 
+	mutexLockVFS.unlock();
 	return 0;
 }
 
 size_t VFS::Read(File* f, char* buff, size_t len) {
+	if (f->MODE == WO_MODE) return 0;
+
+	mutexLockVFS.lock();
+
 	FILE_TABLE* readFT = new FILE_TABLE;
 	getFT(readFT, *f);
 
@@ -298,7 +315,10 @@ size_t VFS::Read(File* f, char* buff, size_t len) {
 													// нет смысла читать больше чем требуется
 													// поэтому размер который читаем - наименьший из двух
 
-	if (readFT->F_CLAST == 0) return -1; // если в файле ничего нет
+	if (readFT->F_CLAST == 0) { 
+		mutexLockVFS.unlock();
+		return -1; 
+	} // если в файле ничего нет
 	// узнаем сколько кластеров нам надо будет прочитать
 	size_t count_cluster = maxLen / CLUSTER_SIZE;
 	if (maxLen % CLUSTER_SIZE) count_cluster++;
@@ -308,7 +328,7 @@ size_t VFS::Read(File* f, char* buff, size_t len) {
 	uint32_t clast = readFT->F_CLAST; // первый кластер 
 
 	// проходим по всем кластерам
-	for (int i = 0;
+	for (size_t i = 0;
 		i < count_cluster && // пока не прочитаем нужное количество кластеров 
 		clast != end_data_block; // пока не дойдем до конца записи
 		i++) {
@@ -319,9 +339,9 @@ size_t VFS::Read(File* f, char* buff, size_t len) {
 
 	size_t count = 0; // счетчик количества прочитанных байт 
 
-	for (int i = 0; i < count_cluster; i++) {
-		fseek(dCT[0], recClastToAddrClast(clasters[i]), SEEK_SET);
-		size_t res = fread(&buff[i * CLUSTER_SIZE], 1, std::min(CLUSTER_SIZE, maxLen), dCT[0]); 
+	for (size_t i = 0; i < count_cluster; i++) {
+		fseek(dCS[0], recClastToAddrClast(clasters[i]), SEEK_SET);
+		size_t res = fread(&buff[i * CLUSTER_SIZE], 1, std::min(CLUSTER_SIZE, maxLen), dCS[0]); 
 #if DEBUG
 		if (res != std::min(CLUSTER_SIZE, maxLen)) std::cout << "Error read" << std::endl;
 #endif DEBUG
@@ -330,6 +350,7 @@ size_t VFS::Read(File* f, char* buff, size_t len) {
 		count += res; 
 	}
 
+	mutexLockVFS.unlock();
 	return count;
 }
 
@@ -349,8 +370,7 @@ uint32_t VFS::createFolder(FILE_TABLE* FT, uint32_t offset) { // возвращает номе
 		while (tempFT->NEXT_REC != 0xFFFFFFFF) { 
 			prevRec = tempFT->NEXT_REC;
 			getFT(tempFT, tempFT->NEXT_REC);
-			if (cmp(FT, tempFT)) {
-				printf("ITS EQUAL FOLDER");
+			if (cmpFT(FT, tempFT)) {
 				return prevRec;
 			}
 		}
@@ -376,14 +396,12 @@ uint32_t VFS::createFolder(FILE_TABLE* FT, uint32_t offset) { // возвращает номе
 		while (tempFT->NEXT_REC != 0xFFFFFFFF) { // пока не дойдем до конца, или не встретим дубль
 			prevRec = tempFT->NEXT_REC;
 			getFT(tempFT, tempFT->NEXT_REC);
-			if (cmp(tempFT, FT)) {
-				printf("ITS EQUAL FOLDER\n");
+			if (cmpFT(tempFT, FT)) {
 				return prevRec;
 			}
 		}
 
-		if (cmp(tempFT, FT)) { // если у нас в каталоге всего один файл и он дубль
-			printf("ITS EQUAL FOLDER\n");
+		if (cmpFT(tempFT, FT)) { // если у нас в каталоге всего один файл и он дубль
 			return prevRec;
 		}
 
@@ -395,14 +413,17 @@ uint32_t VFS::createFolder(FILE_TABLE* FT, uint32_t offset) { // возвращает номе
 }
 
 bool VFS::clearFile(File* t) {
-	FILE_TABLE* temp = new FILE_TABLE;
-	getFT(temp, *t);
+	FILE_TABLE* tempFT = new FILE_TABLE;
+	getFT(tempFT, *t);
 
-	if (temp->F_CLAST == 0) return true;
+	if (tempFT->F_CLAST == 0) { // если файл уже пустой
+		delete tempFT;
+		return true;
+	}
 
 	std::vector <uint32_t> clasters;
 
-	uint32_t clast = temp->F_CLAST;
+	uint32_t clast = tempFT->F_CLAST;
 
 	while (clast != end_data_block) {
 		clasters.push_back(clast);
@@ -410,32 +431,39 @@ bool VFS::clearFile(File* t) {
 		fread(&clast, sizeof(uint32_t), 1, dFT);
 	}
 
-	char* zeroArray = new char[CLUSTER_SIZE];
-	std::fill(zeroArray, zeroArray + CLUSTER_SIZE, 0);
+	char* zeroArray = new char[CLUSTER_SIZE]; // массив который будем использовать для очистки файла
+	std::fill(zeroArray, zeroArray + CLUSTER_SIZE, 0); // заполняем нулями
 
-	while (clasters.size()) {
+	while (clasters.size()) { 
 		clast = clasters.back();
 		clasters.pop_back();
 
-		fseek(dCT[0], recClastToAddrClast(clast), SEEK_SET);
-		fwrite(zeroArray, CLUSTER_SIZE, 1, dCT[0]);
+		// очищаем кластер
+		fseek(dCS[0], recClastToAddrClast(clast), SEEK_SET); 
+		fwrite(zeroArray, CLUSTER_SIZE, 1, dCS[0]);  
 
+		// очищаем инфу о кластере
 		fseek(dFT, clast, SEEK_SET);
 		fwrite("\0", 4, 1, dFT);
 	}
 
-	temp->F_CLAST = 0;
-	temp->REAL_SIZE = 0;
+	// очищаем инфу о файле
+	tempFT->F_CLAST = 0;
+	tempFT->REAL_SIZE = 0;
 
-	reWriteFT(temp, t->FILE_ID);
+	reWriteFT(tempFT, t->FILE_ID);
 
 	delete[] zeroArray;
+
+	delete tempFT;
 
 	return true;
 }
 
 uint32_t VFS::recClastToAddrClast(uint32_t rec) {
-	return (rec - next_clast_offset) / 4 * CLUSTER_SIZE;
+	// так как адресация кластеров в FT прямая (адрес указывает на фактический адрес следующего кластера в файле)
+	// то требуется фактический адрес перевести в адрес в CT
+	return (rec - next_clast_offset) / 4 * CLUSTER_SIZE; 
 }
 
 uint32_t VFS::reWriteFT(FILE_TABLE* FT, uint32_t offset) {
@@ -463,6 +491,8 @@ uint32_t VFS::writeFT(FILE_TABLE* FT) {
 	// если firstSymbName равен 0, то надо откатить на 1 позицию назад
 	if (ftell(dFT) % 0x20 == 1) fseek(dFT, -1, SEEK_CUR);
 
+	if (ftell(dFT) >= 0x01000000) return end_data_block; // если закончилось место
+
 	fseek(dFT, 0, SEEK_CUR);
 
 	fwrite(FT->FILE_NAME, sizeof(char), 12, dFT);
@@ -484,10 +514,12 @@ File* TestTask::VFS::createCheckWithClear(FILE_TABLE* ft1, FILE_TABLE* ft2, File
 	if (openFiles.find({ f->FILE_ID, RO_MODE }) == openFiles.end()) {
 		clearFile(f);
 		openFiles.insert(*f);
+		mutexLockVFS.unlock();
 		return f;
 	}
 	else {
 		delete f;
+		mutexLockVFS.unlock();
 		return nullptr;
 	}
 }
@@ -499,15 +531,17 @@ File* TestTask::VFS::createCheckNonClear(FILE_TABLE* ft1, FILE_TABLE* ft2, File*
 
 	if (openFiles.find({ f->FILE_ID, RO_MODE }) == openFiles.end()) {
 		openFiles.insert(*f);
+		mutexLockVFS.unlock();
 		return f;
 	}
 	else {
 		delete f;
+		mutexLockVFS.unlock();
 		return nullptr;
 	}
 }
 
-bool VFS::cmp(FILE_TABLE* ft1, FILE_TABLE* ft2) {
+bool VFS::cmpFT(FILE_TABLE* ft1, FILE_TABLE* ft2) {
 	return (strcmp(ft1->FILE_NAME, ft2->FILE_NAME) == 0 &&
 		ft1->DOT == ft2->DOT &&
 		strcmp(ft1->EXTENSION, ft2->EXTENSION) == 0 &&
@@ -536,18 +570,16 @@ void VFS::getFT(FILE_TABLE* FT, uint32_t offset) {
 	fread(&FT->REAL_SIZE, sizeof(uint32_t), 1, dFT);
 }
 
-int VFS::writeMETAFT(FILE* file) {
+void VFS::writeMETAFT(FILE* file) {
 	fseek(file, 0, SEEK_SET);
 	fwrite(VERSION, 1, 5, file);
 	fwrite(&CLUSTER_SIZE, sizeof(uint32_t), 1, file);
-	// вообще это костыль, наверное есть и лучше реализация записи 0 в файл, но лучше не придумал(
+	// костыль для записи отправной точки в файл 
 	fseek(file, 0x20, SEEK_SET);
 	fwrite("!", 1, 1, file);
 
 	fseek(file, 0x20 + 0x10 + 0x08, SEEK_SET);
 	fwrite(&end_data_block, sizeof(uint32_t), 1, file);
-
-	return 1;
 }
 
 int VFS::checkFILE_TABLE(FILE* file) {
@@ -557,7 +589,7 @@ int VFS::checkFILE_TABLE(FILE* file) {
 	case (sizeof(buffer)):
 		//all ok
 		for (int i = 0; i < sizeof(VERSION); i++) {
-			if (buffer[i] != VERSION[i]) return 1;
+			if (buffer[i] != VERSION[i]) return 1; // ошибка версии
 		}
 		uint32_t clusterSizeGet;
 		if (BIG_ENDIAN) {
@@ -573,11 +605,11 @@ int VFS::checkFILE_TABLE(FILE* file) {
 				(uint32_t)buffer[8] << 0;
 		}
 
-		if (clusterSizeGet != CLUSTER_SIZE) return 2;
+		if (clusterSizeGet != CLUSTER_SIZE) return 2; // разный размер кластера
 		return 0;
 
 	default:
-		return 1;
+		return 3;
 	}
 }
 
